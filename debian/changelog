@@ -1,0 +1,11 @@
+colr (0.8.1-1ubuntu1) zesty; urgency=medium
+
+  * Update to 0.8.1
+
+ -- Steve Kondik <shade@chemlab.org>  Mon, 31 Jul 2017 01:08:29 -0700
+
+colr (0.7.5.1-1) yakkety; urgency=low
+
+  * source package automatically created by stdeb 0.8.5
+
+ -- Steve Kondik <shade@chemlab.org>  Tue, 28 Feb 2017 16:02:25 -0800

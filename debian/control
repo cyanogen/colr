@@ -1,0 +1,33 @@
+Source: colr
+Maintainer: Steve Kondik <shade@chemlab.org>
+Section: python
+Priority: optional
+Build-Depends: dh-python, python3-setuptools, python3-all, debhelper (>= 9), python3-docopt
+Standards-Version: 3.9.6
+Homepage: https://github.com/welbornprod/colr
+
+Package: python3-colr
+Architecture: all
+Depends: ${misc:Depends}, ${python3:Depends}
+Description: Easy terminal colors, with chainable methods.
+ Colr
+ ====
+ .
+ A python module for using terminal colors in linux. It contains a simple
+ ``color`` function that accepts style and color names, and outputs a
+ string with escape codes, but also has all colors and styles as
+ chainable methods on the ``Colr`` object.
+ .
+ --------------
+ .
+ Dependencies:
+ -------------
+ .
+ System
+ ~~~~~~
+ .
+ -  **Python 3.5+** - This library uses ``yield from`` and the ``typing``
+    module. `Python 2 support is not planned. <#python-2>`__
+ .
+ Modules
+
