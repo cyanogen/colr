@@ -17,15 +17,35 @@ Resources:
 
 -------------------------------------------------------------------------------
 
+    The MIT License (MIT)
 
+    Copyright (c) 2015-2017 Christopher Welborn
+
+    Permission is hereby granted, free of charge, to any person obtaining a
+    copy of this software and associated documentation files (the "Software"),
+    to deal in the Software without restriction, including without limitation
+    the rights to use, copy, modify, merge, publish, distribute, sublicense,
+    and/or sell copies of the Software, and to permit persons to whom the
+    Software is furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in
+    all copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+    THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+    FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+    DEALINGS IN THE SOFTWARE.
 """
 import re
 from types import GeneratorType
-from typing import cast, Any, Optional, Sequence, Union
+from typing import cast, Any, Optional, Tuple, Union
 
 # Custom types.
 Numeric = Union[int, str]
-RGB = Sequence[int]
+RGB = Tuple[int, int, int]
 
 # Original lookup table provided by Micah Elliott (colortrans.py).
 # Modified to dict by Christopher Welborn.
@@ -297,7 +317,13 @@ term2hex_map = {
 }
 
 # Create a map from hex to escape codes.
-hex2term_map = {v: k for k, v in term2hex_map.items()}
+# WARNING: This map must be sorted first, for consistency.
+# The term2hex_map contains duplicate values:
+#   000000 = 00, 16
+#   ffffff = 15, 231
+# Unsorted, hex2term_map could contain either value at runtime!
+# Sorting it means that the last duplicated value will always be used.
+hex2term_map = {term2hex_map[k]: k for k in sorted(term2hex_map)}
 
 
 def fix_hex(hexval: str) -> str:
@@ -313,7 +339,7 @@ def fix_hex(hexval: str) -> str:
     return hexval
 
 
-def hex2rgb(hexval: str, allow_short: bool=False) -> Sequence[int]:
+def hex2rgb(hexval: str, allow_short: bool=False) -> RGB:
     """ Return a tuple of (R, G, B) from a hex color. """
     if not hexval:
         raise ValueError(
@@ -321,7 +347,15 @@ def hex2rgb(hexval: str, allow_short: bool=False) -> Sequence[int]:
                 hexval
             )
         )
-    hexval = hexval.strip().lstrip('#')
+    try:
+        hexval = hexval.strip().lstrip('#')
+    except AttributeError:
+        raise ValueError(
+            'Expecting hex string (#RGB, #RRGGBB), got: ({}) {!r}'.format(
+                type(hexval).__name__,
+                hexval
+            )
+        )
     if allow_short:
         hexval = fix_hex(hexval)
     if not len(hexval) == 6:
@@ -338,7 +372,9 @@ def hex2rgb(hexval: str, allow_short: bool=False) -> Sequence[int]:
     except ValueError:
         # Bad hex string.
         raise ValueError('Invalid hex value: {}'.format(hexval))
-    return val
+    # Only needed to satisft typing. `return val` would work fine.
+    r, g, b = val
+    return r, g, b
 
 
 def hex2term(hexval: str, allow_short: bool=False) -> str:
@@ -433,7 +469,7 @@ def term2hex(code: Numeric, default: Optional[str]=None) -> str:
     return val
 
 
-def term2rgb(code: Numeric) -> Sequence[int]:
+def term2rgb(code: Numeric) -> RGB:
     """ Convert a terminal code to an rgb value. """
     return hex2rgb(term2hex(code))
 
@@ -453,7 +489,7 @@ class ColorCode(object):
             self,
             code: Optional[Any]=None,
             rgb_mode: Optional[bool]=False) -> None:
-        self.rgb = tuple()  # type: Sequence[int]
+        self.rgb = (0, 0, 0)  # type: RGB
         self.hexval = None  # type: str
         self.code = None  # type: str
         self.rgb_mode = rgb_mode  # type: bool
@@ -464,7 +500,7 @@ class ColorCode(object):
         if isinstance(code, (list, tuple, GeneratorType)):
             try:
                 # cast is only needed to satisfy mypy. 'code' would work fine.
-                r, g, b = cast(Sequence[int], code)
+                r, g, b = cast(RGB, code)
             except ValueError:
                 raise TypeError(typeerrmsg)
             self._init_rgb(r, g, b)

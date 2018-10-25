@@ -3,6 +3,7 @@
 
 """ colr.py
     A terminal color library for python, inspired by 'clor' (javascript lib).
+
     -Christopher Welborn 08-12-2015
 
     The MIT License (MIT)
@@ -26,14 +27,12 @@
     LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
     FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
     DEALINGS IN THE SOFTWARE.
-
 """
 from contextlib import suppress  # type: ignore
-from functools import partial, total_ordering
+from functools import partial
 import math
 import os
 import platform
-import re
 import struct
 import sys
 
@@ -45,14 +44,26 @@ from typing import (  # noqa
     List,
     Optional,
     Sequence,
-    Set,
+    Set,  # Set is used as a 'type: Set' comment in `get_known_codes()`.
     Tuple,
     Union,
     cast,
 )
 from typing.io import IO
 
-from .trans import hex2term, ColorCode
+from .base import (
+    ChainedBase,
+    closing_code,
+    get_codes,
+    strip_codes,
+)
+
+from .trans import (
+    ColorCode,
+    hex2rgb,
+    hex2term,
+    hex2termhex,
+)
 from .name_data import names as name_data
 
 # Types for the type checker.
@@ -61,8 +72,8 @@ CodeFormatFunc = Callable[[CodeFormatArg], str]
 CodeFormatRgbFunc = Callable[[int, int, int], str]
 # Acceptable fore/back args.
 ColorArg = Union[str, int, Tuple[int, int, int]]
-
-__version__ = '0.7.5'
+# Acceptable format_* function args.
+FormatArg = Union[int, Tuple[int, int, int]]
 
 __all__ = [
     '_disabled',
@@ -141,11 +152,6 @@ extforeformat = '\033[38;5;{}m'.format  # type: CodeFormatFunc
 extbackformat = '\033[48;5;{}m'.format  # type: CodeFormatFunc
 rgbforeformat = '\033[38;2;{};{};{}m'.format  # type: CodeFormatRgbFunc
 rgbbackformat = '\033[48;2;{};{};{}m'.format  # type: CodeFormatRgbFunc
-
-# Used to strip codes from a string.
-codepat = re.compile('\033\[([\d;]+)?m')
-# Used to grab codes from a string.
-codegrabpat = re.compile('\033\[[\d;]+?m')
 
 
 def _build_codes() -> Dict[str, Dict[str, str]]:
@@ -243,8 +249,13 @@ def enable() -> None:
     _disabled = False
 
 
+def enabled() -> bool:
+    """ Public access to _disabled. """
+    return not _disabled
+
+
 def _format_code(
-        number: Union[int, Sequence[int]],
+        number: FormatArg,
         backcolor: Optional[bool]=False,
         light: Optional[bool]=False,
         extended: Optional[bool]=False) -> str:
@@ -287,9 +298,10 @@ def _format_code(
         try:
             n = int(cast(int, number))
         except ValueError:
+            # Not an rgb code, or a valid code number.
             raise InvalidColr(
                 number,
-                'Expecting 0-255 for {} code.'.format(codetype)
+                'Expecting RGB or 0-255 for {} code.'.format(codetype)
             )
         if light:
             if not in_range(n, 0, 9):
@@ -330,7 +342,7 @@ def _format_code(
 
 
 def format_back(
-        number: Union[int, Sequence[int]],
+        number: FormatArg,
         light: Optional[bool]=False,
         extended: Optional[bool]=False) -> str:
     """ Return an escape code for a back color, by number.
@@ -347,7 +359,7 @@ def format_back(
 
 
 def format_fore(
-        number: Union[int, Sequence[int]],
+        number: FormatArg,
         light: Optional[bool]=False,
         extended: Optional[bool]=False) -> str:
     """ Return an escape code for a fore color, by number.
@@ -416,15 +428,8 @@ def get_code_num_rgb(s: str) -> Optional[Tuple[int, int, int]]:
     return r, g, b
 
 
-def get_codes(s: str) -> List[str]:
-    """ Grab all escape codes from a string.
-        Returns a list of all escape codes.
-    """
-    return codegrabpat.findall(s)
-
-
 def get_known_codes(
-        s: str,
+        s: Union[str, 'Colr'],
         unique: Optional[bool]=True,
         rgb_mode: Optional[bool]=False):
     """ Get all known escape codes from a string, and yield the explanations.
@@ -560,7 +565,10 @@ def in_range(x: int, minimum: int, maximum: int) -> bool:
     return (x >= minimum and x <= maximum)
 
 
-def parse_colr_arg(s: str, default: Optional[Any]=None) -> ColorArg:
+def parse_colr_arg(
+        s: str,
+        default: Optional[Any]=None,
+        rgb_mode: Optional[bool]=False) -> ColorArg:
     """ Parse a user argument into a usable fore/back color value for Colr.
         If a falsey value is passed, default is returned.
         Raises InvalidColr if the argument is unusable.
@@ -602,8 +610,13 @@ def parse_colr_arg(s: str, default: Optional[Any]=None) -> ColorArg:
                 # A known named color.
                 return val
 
-            # Not a basic/extended/known name.
-            raise InvalidColr(val)
+            # Not a basic/extended/known name, try as hex.
+            try:
+                if rgb_mode:
+                    return hex2rgb(val, allow_short=True)
+                return hex2termhex(val, allow_short=True)
+            except ValueError:
+                raise InvalidColr(val)
         else:
             # Got rgb. Do some validation.
             if not all((in_range(x, 0, 255) for x in (r, g, b))):
@@ -613,14 +626,17 @@ def parse_colr_arg(s: str, default: Optional[Any]=None) -> ColorArg:
     else:
         # Int value.
         if not in_range(intval, 0, 255):
+            # May have been a hex value confused as an int.
+            if len(val) in (3, 6):
+                try:
+                    if rgb_mode:
+                        return hex2rgb(val, allow_short=True)
+                    return hex2termhex(val, allow_short=True)
+                except ValueError:
+                    raise InvalidColr(val)
             raise InvalidColr(intval)
         # Valid int value.
         return intval
-
-
-def strip_codes(s: str) -> str:
-    """ Strip all color codes from a string. """
-    return codepat.sub('', str(s or ''))
 
 
 def try_parse_int(
@@ -645,49 +661,37 @@ def try_parse_int(
     return n
 
 
-@total_ordering
-class Colr(object):
+class Colr(ChainedBase):
 
     """ This class colorizes text for an ansi terminal. """
+    # Known offsets for `Colr.rainbow` that will start with a certain color.
+    gradient_names = {
+        'green': 0,
+        'orange': 9,
+        'lightred': 15,
+        'magenta': 20,
+        'red': 80,
+        'yellow': 62,
+        'blue': 34,
+        'cyan': 48,
+    }
 
     def __init__(
             self,
             text: Optional[str]=None,
             fore: Optional[ColorArg]=None,
             back: Optional[ColorArg]=None,
-            style: Optional[str]=None) -> None:
+            style: Optional[str]=None,
+            no_closing: Optional[bool]=False) -> None:
         """ Initialize a Colr object with text and color options. """
         # Can be initialized with colored text, not required though.
         self.data = self.color(
             text,
             fore=fore,
             back=back,
-            style=style
+            style=style,
+            no_closing=no_closing,
         )
-
-    def __add__(self, other: 'Colr') -> 'Colr':
-        """ Allow the old string concat methods through addition. """
-        if isinstance(other, self.__class__):
-            return self.__class__(''.join((self.data, other.data)))
-        elif isinstance(other, str):
-            return self.__class__(''.join((self.data, other)))
-
-        raise TypeError(
-            'Colr cannot be added to non Colr/str type: {}'.format(
-                getattr(other, '__name__', type(other).__name__)
-            )
-        )
-
-    def __bool__(self):
-        """ A Colr is truthy if it has some .data. """
-        return bool(self.data)
-
-    def __bytes__(self):
-        """ A Colr's bytes() value is just str(self.data).encode().
-            For other encodings, you can use self.data.encode('ascii') or
-            whatever encoding you want to use.
-        """
-        return str(self.data or '').encode()
 
     def __call__(self, text=None, fore=None, back=None, style=None):
         """ Append text to this Colr object. """
@@ -735,34 +739,6 @@ class Colr(object):
         ))
         return attrs
 
-    def __eq__(self, other):
-        """ Colrs are equal if their .data is the same. """
-        return isinstance(other, self.__class__) and other.data == self.data
-
-    def __format__(self, fmt):
-        """ Allow format specs to  apply to self.data """
-        methodmap = {
-            '<': self.ljust,
-            '>': self.rjust,
-            '^': self.center,
-        }
-        for align in methodmap:
-            char, sign, width = fmt.partition(align)
-            if not sign:
-                continue
-            if not char:
-                char = ' '
-            try:
-                widthval = int(width)
-            except ValueError:
-                raise ValueError(
-                    'Invalid width for format specifier: {}'.format(width)
-                )
-            return str(methodmap[align](widthval, fillchar=char))
-
-        # Fallback to plain str modifier.
-        return str(self).__format__(fmt)
-
     def __getattr__(self, attr):
         """ If the attribute matches a fore, back, or style name,
             return the color() function. Otherwise, return known
@@ -780,68 +756,6 @@ class Colr(object):
             except AttributeError:
                 raise AttributeError(ex)
         return val
-
-    def __getitem__(self, key):
-        """ Allow subscripting self.data. This will ignore any escape codes,
-            because otherwise it would be just about useless.
-            Returns another Colr instance.
-        """
-        return self.__class__(self.stripped()[key])
-
-    def __hash__(self):
-        """ A Colr's hash value is based on self.data. """
-        return hash(str(self.data or ''))
-
-    def __len__(self):
-        """ Return len() for any built up string data. This will count color
-            codes, so it's not that useful.
-        """
-        return len(self.data)
-
-    def __lt__(self, other):
-        """ Colr is less another color if self.data < other.data.
-            Colr cannot be compared to any other type.
-        """
-        if not isinstance(other, self.__class__):
-            raise TypeError('Cannot compare. Expected: {}, got: {}.'.format(
-                self.__class__.__name__,
-                getattr(other, '__name__', type(other).__name__)))
-        return self.data < other.data
-
-    def __mul__(self, n):
-        """ Allow the same multiplication operator as str,
-            except return a Colr.
-        """
-        if not isinstance(n, int):
-            raise TypeError(
-                'Cannot multiply Colr by non-int type: {}'.format(
-                    getattr(n, '__name__', type(n).__name__)
-                )
-            )
-
-        return self.__class__(self.data * n)
-
-    def __radd__(self, other):
-        """ Allow a Colr to be added to a str. """
-        if isinstance(other, self.__class__):
-            return self.__class__(''.join((other.data, self.data)))
-        elif isinstance(other, str):
-            return self.__class__(''.join((other, self.data)))
-
-        raise TypeError(
-            'Colr cannot be added to non Colr/str type: {}'.format(
-                getattr(other, '__name__', type(other).__name__)
-            )
-        )
-
-    def __rmul__(self, n):
-        return self * n
-
-    def __repr__(self):
-        return repr(self.data)
-
-    def __str__(self):
-        return self.data
 
     def _attr_to_method(self, attr):
         """ Return the correct color function by method name.
@@ -1308,53 +1222,28 @@ class Colr(object):
             for i, c in enumerate(s)
         )
 
-    def _str_just(
-            self, methodname, width, fillchar=' ', squeeze=False,
-            **colorkwargs):
-        """ Perform a str justify method on the text arg, or self.data, before
-            applying color codes.
+    def b_hex(self, value, text=None, fore=None, style=None, rgb_mode=False):
+        """ A chained method that sets the back color to an hex value.
             Arguments:
-                methodname  : Name of str method to apply.
-                methodargs  : Arguments for the str method.
+                value    : Hex value to convert.
+                text     : Text to style if not building up color codes.
+                fore     : Fore color for the text.
+                style    : Style for the text.
+                rgb_mode : If False, the closest extended code is used,
+                           otherwise true color (rgb) mode is used.
 
-            Keyword Arguments:
-                text, fore, back, style  : see color().
         """
-        try:
-            width = int(width)
-        except ValueError as exint:
-            raise ValueError('Expecting a number for width.') from exint
-
-        newtext = ''
-        with suppress(KeyError):
-            # text argument overrides self.data
-            newtext = str(colorkwargs.pop('text'))
-
-        strfunc = getattr(str, methodname)
-        if newtext:
-            # Operating on text argument, self.data is left alone.
-            strippedtxt = strip_codes(newtext)
-            codelen = len(newtext) - len(strippedtxt)
-            width = width + codelen
-            if squeeze:
-                realoldlen = len(self.stripped())
-                width -= realoldlen
-            return self.__class__().join(
-                self,
-                self.__class__(
-                    strfunc(newtext, width, fillchar),
-                    **colorkwargs
-                )
-            )
-
-        # Operating on self.data.
-        strippedtxt = self.stripped()
-        codelen = len(self.data) - len(strippedtxt)
-        width = width + codelen
-        return self.__class__(
-            strfunc(self.data, width, fillchar),
-            **colorkwargs
-        )
+        if rgb_mode:
+            try:
+                colrval = hex2rgb(value, allow_short=True)
+            except ValueError:
+                raise InvalidColr(value)
+        else:
+            try:
+                colrval = hex2term(value, allow_short=True)
+            except ValueError:
+                raise InvalidColr(value)
+        return self.chained(text=text, fore=fore, back=colrval, style=style)
 
     def b_rgb(self, r, g, b, text=None, fore=None, style=None):
         """ A chained method that sets the back color to an RGB value.
@@ -1367,26 +1256,6 @@ class Colr(object):
                 style : Style for the text.
         """
         return self.chained(text=text, fore=fore, back=(r, g, b), style=style)
-
-    def center(self, width, fillchar=' ', squeeze=False, **kwargs):
-        """ s.center() doesn't work well on strings with color codes.
-            This method will use .center() before colorizing the text.
-            Returns a Colr() object.
-            Arguments:
-                width    : The width for the resulting string (before colors)
-                fillchar : The character to pad with. Default: ' '
-                squeeze  : Width applies to existing data and new data.
-                           (self.data and the text arg)
-            Keyword Arguments:
-                text     : The string to center, otherwise self.data is used.
-                fore, back, style : see color().
-        """
-        return self._str_just(
-            'center',
-            width,
-            fillchar,
-            squeeze=squeeze,
-            **kwargs)
 
     def chained(self, text=None, fore=None, back=None, style=None):
         """ Called by the various 'color' methods to colorize a single string.
@@ -1405,7 +1274,9 @@ class Colr(object):
         ))
         return self
 
-    def color(self, text=None, fore=None, back=None, style=None):
+    def color(
+            self, text=None, fore=None, back=None, style=None,
+            no_closing=False):
         """ A method that colorizes strings, not Colr objects.
             Raises InvalidColr for invalid color names.
             The 'reset_all' code is appended if text is given.
@@ -1418,10 +1289,23 @@ class Colr(object):
             (back is not None) or
             (style is not None)
         )
-
-        if (text and (not text.rstrip().endswith(closing_code)) and has_args):
-            # Add closing code if not already added, there is text, and
-            # some kind of color/style was used.
+        # Considered to have unclosed codes if embedded codes exist and
+        # the last code was not a color code.
+        embedded_codes = get_codes(text)
+        has_end_code = embedded_codes and embedded_codes[-1] == closing_code
+        # Add closing code if not already added, there is text, and
+        # some kind of color/style was used (whether from args, or
+        # color codes were included in the text already).
+        # If the last code embedded in the text was a closing code,
+        # then it is not added.
+        # This can be overriden with `no_closing`.
+        needs_closing = (
+            text and
+            (not no_closing) and
+            (not has_end_code) and
+            (has_args or embedded_codes)
+        )
+        if needs_closing:
             end = closing_code
         else:
             end = ''
@@ -1445,7 +1329,9 @@ class Colr(object):
             # Get escape code for this style.
             code = self.get_escape_code(stype, stylearg)
             stylename = str(stylearg).lower()
-            if stylename.startswith('reset'):
+            if (stype == 'style') and (stylename in ('0', )):
+                resetcodes.append(code)
+            elif stylename.startswith('reset'):
                 resetcodes.append(code)
             else:
                 colorcodes.append(code)
@@ -1485,6 +1371,11 @@ class Colr(object):
                     codetype
                 )
             )
+        # Try as hex.
+        with suppress(ValueError):
+            value = int(hex2term(value, allow_short=True))
+            return converter(value, extended=True)
+
         named_data = name_data.get(valuefmt, None)
         if named_data is not None:
             # A known named color.
@@ -1498,15 +1389,17 @@ class Colr(object):
         # Not a known color name/value, try rgb.
         try:
             r, g, b = (int(x) for x in value)
-            # This does not mean we have 3 ints. It could 'abc'.
+            # This does not mean we have a 3 int tuple. It could '111'.
             # The converter should catch it though.
         except (TypeError, ValueError):
             # Not an rgb value.
             if codetype == 'style':
                 raise InvalidStyle(value)
-            raise InvalidColr(value)
-
-        return converter(value)
+        try:
+            escapecode = converter(value)
+        except ValueError as ex:
+            raise InvalidColr(value) from ex
+        return escapecode
 
     def gradient(
             self, text=None, name=None, fore=None, back=None, style=None,
@@ -1571,16 +1464,7 @@ class Colr(object):
                 )
             try:
                 # Get rainbow offset from known name.
-                offset = {
-                    'green': 0,
-                    'orange': 9,
-                    'lightred': 15,
-                    'magenta': 20,
-                    'red': 80,
-                    'yellow': 62,
-                    'blue': 34,
-                    'cyan': 48,
-                }[name]
+                offset = self.gradient_names[name]
             except KeyError:
                 raise ValueError('Unknown gradient name: {}'.format(name))
 
@@ -1715,6 +1599,29 @@ class Colr(object):
             )
         )
 
+    def hex(self, value, text=None, back=None, style=None, rgb_mode=False):
+        """ A chained method that sets the fore color to an hex value.
+            Arguments:
+                value    : Hex value to convert.
+                text     : Text to style if not building up color codes.
+                back     : Back color for the text.
+                style    : Style for the text.
+                rgb_mode : If False, the closest extended code is used,
+                           otherwise true color (rgb) mode is used.
+
+        """
+        if rgb_mode:
+            try:
+                colrval = hex2rgb(value, allow_short=True)
+            except ValueError:
+                raise InvalidColr(value)
+        else:
+            try:
+                colrval = hex2term(value, allow_short=True)
+            except ValueError:
+                raise InvalidColr(value)
+        return self.chained(text=text, fore=colrval, back=back, style=style)
+
     def join(self, *colrs, **colorkwargs):
         """ Like str.join, except it returns a Colr.
             Arguments:
@@ -1742,25 +1649,11 @@ class Colr(object):
             )
         return self.__class__(self.data.join(flat))
 
-    def ljust(self, width, fillchar=' ', squeeze=False, **kwargs):
-        """ s.ljust() doesn't work well on strings with color codes.
-            This method will use .ljust() before colorizing the text.
-            Returns a Colr() object.
-            Arguments:
-                width    : The width for the resulting string (before colors)
-                fillchar : The character to pad with. Default: ' '
-                squeeze  : Width applies to existing data and new data.
-                           (self.data and the text arg)
-            Keyword Arguments:
-                text     : The string to left-justify, otherwise self.data.
-                fore, back, style : see color().
-        """
-        return self._str_just(
-            'ljust',
-            width,
-            fillchar,
-            squeeze=squeeze,
-            **kwargs
+    def lstrip(self, chars=None):
+        """ Like str.lstrip, except it returns the Colr instance. """
+        return self.__class__(
+            self._str_strip('lstrip', chars),
+            no_closing=chars and (closing_code in chars),
         )
 
     def print(self, *args, **kwargs):
@@ -1845,33 +1738,19 @@ class Colr(object):
         """
         return self.chained(text=text, fore=(r, g, b), back=back, style=style)
 
-    def rjust(self, width, fillchar=' ', squeeze=False, **kwargs):
-        """ s.rjust() doesn't work well on strings with color codes.
-            This method will use .rjust() before colorizing the text.
-            Returns a Colr() object.
-            Arguments:
-                width    : The width for the resulting string (before colors)
-                fillchar : The character to pad with. Default: ' '
-                squeeze  : Width applies to existing data and new data.
-                           (self.data and the text arg)
-            Keyword Arguments:
-                text     : The string to right-justify, otherwise self.data.
-                fore, back, style : see color().
-        """
-        return self._str_just(
-            'rjust',
-            width,
-            fillchar,
-            squeeze=squeeze,
-            **kwargs)
+    def rstrip(self, chars=None):
+        """ Like str.rstrip, except it returns the Colr instance. """
+        return self.__class__(
+            self._str_strip('rstrip', chars),
+            no_closing=chars and (closing_code in chars),
+        )
 
-    def str(self):
-        """ Alias for self.__str__ """
-        return str(self)
-
-    def stripped(self):
-        """ Return str(strip_codes(self.data)) """
-        return strip_codes(self.data)
+    def strip(self, chars=None):
+        """ Like str.strip, except it returns the Colr instance. """
+        return self.__class__(
+            self._str_strip('strip', chars),
+            no_closing=chars and (closing_code in chars),
+        )
 
 
 class InvalidArg(ValueError):
@@ -1902,14 +1781,16 @@ class InvalidArg(ValueError):
 class InvalidColr(InvalidArg):
     """ A ValueError for when user passes an invalid colr name, value, rgb.
     """
-    default_label = 'Expecting colr name/value:\n    {types}.'.format(
+    accepted_values = (
+        ('hex', '[#]rgb/[#]rrggbb'),
+        ('name', 'white/black/etc.'),
+        ('rgb', '0-255, 0-255, 0-255'),
+        ('value', '0-255'),
+    )
+    default_label = 'Expecting colr name/value:\n    {types}'.format(
         types=',\n    '.join(
-            '{lbl} ({val})'.format(lbl=l, val=v)
-            for l, v in (
-                ('name', 'white/black/etc.'),
-                ('value', '0-255'),
-                ('rgb', '0-255, 0-255, 0-255'),
-            )
+            '{lbl:<5} ({val})'.format(lbl=l, val=v)
+            for l, v in accepted_values
         )
     )
     default_format = '{label}\n    Got: {value}'
@@ -1927,15 +1808,11 @@ class InvalidColr(InvalidArg):
             label=Colr(':\n    ').join(
                 Colr('Expecting colr name/value', **label_args),
                 ',\n    '.join(
-                    '{lbl} ({val})'.format(
+                    '{lbl:<5} ({val})'.format(
                         lbl=Colr(l, **type_args),
                         val=Colr(v, **type_val_args),
                     )
-                    for l, v in (
-                        ('name', 'white/black/etc.'),
-                        ('value', '0-255'),
-                        ('rgb', '0-255, 0-255, 0-255'),
-                    )
+                    for l, v in self.accepted_values
                 )
             ),
             value=Colr(repr(self.value), **value_args)
@@ -1995,7 +1872,6 @@ class InvalidStyle(InvalidColr):
 # Raw code map, available to users.
 codes = _build_codes()
 codes_reverse = _build_codes_reverse(codes)
-closing_code = '\033[0m'
 
 # Shortcuts.
 color = Colr().color

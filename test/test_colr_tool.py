@@ -16,23 +16,28 @@ import sys
 import unittest
 
 from colr import (
+    Colr,
+    hex2rgb,
     name_data,
     InvalidColr,
     InvalidStyle,
+    rgb2hex,
 )
 from colr.__main__ import (
     __version__,
+    get_colr,
     main
 )
-r = random.SystemRandom()
 
-print('Testing Colr Tool v. {}'.format(__version__))
+from .testing_tools import ColrTestCase
+
+r = random.SystemRandom()
 
 # Save names in list format, for random.choice().
 name_data_names = list(name_data)
 
 
-class ColrToolTests(unittest.TestCase):
+class ColrToolTests(ColrTestCase):
     def setUp(self):
         # Default argd, when no flags are given.
         self.argd = {
@@ -97,6 +102,12 @@ class ColrToolTests(unittest.TestCase):
                 for _ in range(max_vals)
             ))
         )
+
+        # Valid hex values.
+        self.valid_hex_vals = ['000', 'fff', 'f0f', 'aba']
+        for rgb in self.valid_rgb_vals:
+            rgbtup = tuple(int(x) for x in rgb.split(','))
+            self.valid_hex_vals.append(rgb2hex(*rgbtup))
 
         # Valid style names/values.
         self.valid_style_vals = (
@@ -188,8 +199,58 @@ class ColrToolTests(unittest.TestCase):
             )
         # Invalid color values should raise a InvalidColr.
         badargsets = (
-            {'FORE': '257', 'BACK': r.choice(self.valid_ext_vals)},
+            {'FORE': '1000', 'BACK': r.choice(self.valid_ext_vals)},
             {'BACK': '-1', 'FORE': r.choice(self.valid_ext_vals)},
+        )
+        for argset in badargsets:
+            argd.update(argset)
+            with self.assertRaises(InvalidColr):
+                self.run_main_test(argd, should_fail=True)
+
+    def test_hex_colors(self):
+        """ colr tool should recognize hex colors. """
+        argd = {'TEXT': 'Hello World', 'FORE': 'd7d7d7'}
+        for _ in range(10):
+            argd['FORE'] = r.choice(self.valid_hex_vals)
+            argd['BACK'] = r.choice(self.valid_hex_vals)
+            self.assertEqual(
+                0,
+                self.run_main_test(argd, should_fail=False)
+            )
+
+        # Without -T, close matches should be used.
+        argd = {'TEXT': 'Hello World', '--truecolor': False}
+        hexvals = {
+            '010203': '000000',
+            '040506': '000000',
+        }
+        for hexval, closematch in hexvals.items():
+            argd['FORE'] = hexval
+            self.assertEqual(
+                get_colr(argd['TEXT'], self.make_argd(argd)),
+                Colr(argd['TEXT'], closematch),
+                msg='Hex value close match failed without --truecolor.',
+            )
+        # With -T, rgb mode should be used.
+        argd = {'TEXT': 'Hello World', '--truecolor': True}
+        hexvals = (
+            '010203',
+            '040506',
+        )
+        for hexval in hexvals:
+            argd['FORE'] = hexval
+            self.assertEqual(
+                get_colr(argd['TEXT'], self.make_argd(argd)),
+                Colr(argd['TEXT'], hex2rgb(argd['FORE'])),
+                msg='Hex value failed with --truecolor.',
+            )
+        # Invalid color values should raise a InvalidColr.
+        argd['--truecolor'] = False
+
+        argd = {'TEXT': 'Hello World'}
+        badargsets = (
+            {'FORE': 'ffooll', 'BACK': r.choice(self.valid_hex_vals)},
+            {'BACK': 'oopsie', 'FORE': r.choice(self.valid_hex_vals)},
         )
         for argset in badargsets:
             argd.update(argset)
@@ -211,7 +272,7 @@ class ColrToolTests(unittest.TestCase):
             {'FORE': '-1,25,25', 'BACK': r.choice(self.valid_rgb_vals)},
             {'BACK': '257,25,25', 'FORE': r.choice(self.valid_rgb_vals)},
             {'FORE': 'a,255,255', 'BACK': r.choice(self.valid_rgb_vals)},
-            {'BACK': 'abc', 'FORE': r.choice(self.valid_rgb_vals)},
+            {'BACK': 'xxx', 'FORE': r.choice(self.valid_rgb_vals)},
         )
         for argset in badargsets:
             argd.update(argset)
@@ -239,5 +300,6 @@ class ColrToolTests(unittest.TestCase):
 
 
 if __name__ == '__main__':
+    print('Testing Colr Tool v. {}'.format(__version__))
     # unittest.main() calls sys.exit(status_code).
     unittest.main(argv=sys.argv, verbosity=2)

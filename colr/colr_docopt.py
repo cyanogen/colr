@@ -1,12 +1,34 @@
 #!/usr/bin/env python3
 """ Colorizes docopt usage/version strings.
+
     -Christopher Joseph Welborn 11-15-16
-"""
+
+    The MIT License (MIT)
+
+    Copyright (c) 2015-2017 Christopher Welborn
+
+    Permission is hereby granted, free of charge, to any person obtaining a
+    copy of this software and associated documentation files (the "Software"),
+    to deal in the Software without restriction, including without limitation
+    the rights to use, copy, modify, merge, publish, distribute, sublicense,
+    and/or sell copies of the Software, and to permit persons to whom the
+    Software is furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in
+    all copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+    THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+    FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+    DEALINGS IN THE SOFTWARE."""
 import sys
 
-from .colr import Colr as C
-
 import docopt
+
+from .colr import Colr as C
 
 # This can be set with a call to colr_docopt.docopt().
 # When set, the script name can be colorized.
@@ -109,20 +131,26 @@ def docopt(
     """
 This is a wrapper for docopt.docopt that also sets SCRIPT to `script`.
     When SCRIPT is set, it can be colorized for the usage string.
-    A dict of Colr options can be passed with `colors` to alter the styles.
+    A dict of Colr options can be passed with `colors` to alter the
+    styles.
     Available color options keys:
         desc     : Colr args for the description of options.
         label    : Colr args for the 'Usage:' and 'Options:' labels.
-        header   : Colr args for the top line (program name), and any other
-                   line that is not indented at all.
+        header   : Colr args for the top line (program name), and any
+                   other line that is not indented at all.
         options  : Colr args for the options themselves ('-h,--help').
-        script   : Colr args for the script name (if found in the usage text).
+        script   : Colr args for the script name, if found in the usage
+                   text.
         version  : Colr args for the version when --version is used.
 
     Example:
-        # `colors` only updates the default settings. You must override them
-        # to change ALL the settings.
-        argd = docopt(..., script=SCRIPT, colors={'script': {'fore': 'red'}})
+        # `colors` only updates the default settings. You must override
+        # them to change ALL the settings.
+        argd = docopt(
+            ...,
+            script=SCRIPT,
+            colors={'script': {'fore': 'red'}}
+        )
 
 Original docopt documentation follows:
     """
@@ -133,7 +161,9 @@ Original docopt documentation follows:
     SCRIPT = script
     if colors:
         # Setup colors, if any were given.
-        ARGS_DESC.update(colors.get('desc', colors.get('description', {})))
+        ARGS_DESC.update(
+            colors.get('desc', colors.get('description', {}))
+        )
         ARGS_HEADER.update(colors.get('header', {}))
         ARGS_LABEL.update(colors.get('label', {}))
         ARGS_OPTIONS.update(colors.get('options', {}))
